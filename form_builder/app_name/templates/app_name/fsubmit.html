@@ -1,0 +1,235 @@
+{% extends 'app_name/base.html' %}
+
+{% block title %}
+    {{ form.title }}
+{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <div class="card shadow-lg">
+        <div class="card-header bg-info text-white">
+          <h2 class="mb-0">{{ form.title }}</h2>
+        </div>
+        <div class="card-body">
+          {% if form.description %}
+          <p class="lead mb-4">{{ form.description }}</p>
+          {% endif %}
+
+          <form id="formSubmission" class="needs-validation" novalidate>
+            {% csrf_token %}
+            <input type="hidden" id="startTime" name="startTime" />
+
+            {% for question in form.questions.all %}
+            <div class="mb-4">
+              <label class="form-label">
+                {{ question.question_text }} {% if question.required %}
+                <span class="text-danger">*</span>
+                {% endif %}
+              </label>
+
+              {% if question.question_type == 'text' %}
+              <input
+                type="text"
+                class="form-control shadow-sm"
+                name="question_{{ question.id }}"
+                {%
+                if
+                question.required
+                %}required{%
+                endif
+                %}
+              />
+              {% elif question.question_type == 'checkbox' %}
+              {% for option in question.get_options %}
+              <div class="form-check">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  name="question_{{ question.id }}"
+                  value="{{ option }}"
+                  id="option_{{ question.id }}_{{ forloop.counter }}"
+                />
+                <label class="form-check-label" for="option_{{ question.id }}_{{ forloop.counter }}">
+                  {{ option }}
+                </label>
+              </div>
+              {% endfor %}
+              {% elif question.question_type == 'dropdown' %}
+              <select
+                class="form-select shadow-sm"
+                name="question_{{ question.id }}"
+                {%
+                if
+                question.required
+                %}required{%
+                endif
+                %}
+              >
+                <option value="">Choose...</option>
+                {% for option in question.get_options %}
+                <option value="{{ option }}">{{ option }}</option>
+                {% endfor %}
+              </select>
+              {% endif %} 
+              {% if question.required %}
+              <div class="invalid-feedback">This field is required.</div>
+              {% endif %}
+            </div>
+            {% endfor %}
+
+            <button type="submit" class="btn btn-info w-100 py-2">Submit</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Success Modal -->
+<div class="modal fade" id="successModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title">Success!</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>Your response has been submitted successfully.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-info" onclick="submitAnotherResponse()">Submit Another Response</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // Set start time when page loads
+  document.getElementById("startTime").value = new Date().toISOString();
+
+  function submitAnotherResponse() {
+    window.location.reload();
+  }
+
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== "") {
+      const cookies = document.cookie.split(";");
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === name + "=") {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  const csrftoken = getCookie("csrftoken");
+
+  $.ajaxSetup({
+    beforeSend: function (xhr, settings) {
+      if (
+        !/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type) &&
+        !this.crossDomain
+      ) {
+        xhr.setRequestHeader("X-CSRFToken", csrftoken);
+      }
+    },
+  });
+
+  $("#formSubmission").on("submit", function (e) {
+    e.preventDefault();
+
+    // Check form validity
+    if (!this.checkValidity()) {
+      e.stopPropagation();
+      $(this).addClass("was-validated");
+      return;
+    }
+
+    const formData = {
+      start_time: document.getElementById("startTime").value,
+      end_time: new Date().toISOString(),
+      answers: {},
+    };
+
+    // Collect text and dropdown answers
+    $(this)
+      .find('input[type="text"], select')
+      .each(function () {
+        const name = $(this).attr("name");
+        if (name && this.value && this.value !== "Choose...") {
+          formData.answers[name] = this.value;
+        }
+      });
+
+    // Handle checkboxes
+    const checkboxGroups = {};
+    $(this)
+      .find('input[type="checkbox"]:checked')
+      .each(function () {
+        const name = $(this).attr("name");
+        if (!checkboxGroups[name]) {
+          checkboxGroups[name] = [];
+        }
+        checkboxGroups[name].push($(this).val());
+      });
+
+    // Add checkbox values to formData
+    Object.entries(checkboxGroups).forEach(([name, values]) => {
+      formData.answers[name] = values;
+    });
+
+    // Submit form
+    $.ajax({
+      url: window.location.href,
+      type: "POST",
+      contentType: "application/json",
+      data: JSON.stringify(formData),
+      success: function (response) {
+        // Show success modal
+        const successModal = new bootstrap.Modal(
+          document.getElementById("successModal")
+        );
+        successModal.show();
+        // Reset form
+        $("#formSubmission").removeClass("was-validated")[0].reset();
+        // Reset start time
+        document.getElementById("startTime").value = new Date().toISOString();
+      },
+      error: function (xhr, status, error) {
+        let errorMessage = "Error submitting form";
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (response.error) {
+            errorMessage = response.error;
+          }
+        } catch (e) {
+          errorMessage = error || "Internal Server Error";
+        }
+        alert(errorMessage);
+      },
+    });
+  });
+
+  // Enable Bootstrap form validation
+  const forms = document.querySelectorAll(".needs-validation");
+  Array.from(forms).forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      if (!form.checkValidity()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      form.classList.add("was-validated");
+    });
+  });
+</script>
+{% endblock %}
